@@ -2,7 +2,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -16,27 +18,34 @@ namespace ARC
         static void Main(string[] args)
         {
             ARC myArc = new ARC();
-            Console.WriteLine("ARC Machine running, enter a line of assembly code ( the machine sadly only works with a single line at a time )");
-            Console.WriteLine("It only supports Memory / Arithmetic formats as well"); // habar nu am cum functioneaza CALL, SETHI, si BRANCH 
+            Console.WriteLine("ARC Machine running, so far it only supports line by line assembly with no labels (WiP).");
+            Console.WriteLine("It only supports Memory / Arithmetic formats, type 'help' for more info.");
+            Console.WriteLine("Errors thrown will result in the machine registries being reset to avoid corruption."); // wip CALL / BRANCH , sethi is automatically handled 
             while (true)
             {
                 try
                 {
                     myArc.Work(Console.ReadLine());
                 }
-                catch (Exception e) { Console.WriteLine(e); }
+                catch (Exception e) 
+                { 
+                    Console.WriteLine($"{e.Message}");
+                    myArc.Reset();
+                }
             }
 
         }
     }
     class ARC
     {
-        static List<Registry> rgs = new List<Registry>();
-        static Registry rN;
-        static Registry Link;
-        static Registry PSR;
+        List<Registry> rgs = new List<Registry>();
+        Registry rN;
+        Registry sp;
+        Registry Link;
+        Registry PSR;
+        Registry PC;
 
-        static List<Memory> Mem = new List<Memory>();
+        List<Memory> Mem = new List<Memory>();
 
         StringBuilder str { get; set; }
         public ARC()
@@ -47,10 +56,21 @@ namespace ARC
                 rgs.Add(new Registry(i));
             }
             rN = rgs[0];
+            sp = rgs[14];
             Link = rgs[15];
             PSR = new Registry(32);
+            PC = new Registry(33);
+            rgs.Add(PC);
             rgs.Add(PSR);
-            rgs[1].SetValue(-1);
+        }
+        public void Reset()
+        {
+            foreach(Registry r in rgs)
+            {
+                r.SetValue(0);
+            }
+            str.Clear();
+            Console.WriteLine("~machine was reset to a stable state~");
         }
         public void Work(string text)
         {
@@ -60,6 +80,7 @@ namespace ARC
                 return;
             }
             text = text.Split('!')[0]; // removes comments
+            
             string first = text.Split(' ')[0];
             
 
@@ -71,9 +92,21 @@ namespace ARC
 
         private void WriteAllCommands()
         {
+           // Console.WriteLine()
             Console.WriteLine();
-            Console.WriteLine($"Commands available:{Environment.NewLine}ld {Environment.NewLine}  Example: ld %r[0-31], %r[0-31], %r[0-31] // ld %r[0-31], int, %r[0-31] , registers 14 and 15 cannot be used");
-            Console.WriteLine("st, addcc, andcc, orcc, slr, printinf ");
+            Console.WriteLine($"Commands available:{Environment.NewLine}'ld' {Environment.NewLine}  Example: ld 5, %r25 // loads value 5 into registry 25, there are 31 of them and 14 and 15 cannot be used either");
+            Console.WriteLine("  Example with memory ( if there is one ) : ld [memID], %r25");
+            Console.WriteLine("'st'");
+            Console.WriteLine("  Example: st %r5, [memID] // stores value of registry 5 into a memory identified by it's id, id has to be between []");
+            Console.WriteLine("'addc'");
+            Console.WriteLine("  Example: addcc %r5, 5, %r6   // adds 5 to registry 5 value and stores it in registry 6");
+            Console.WriteLine("  Example: addcc %r5, %r2, %r6   // adds %r5 value to registry 2 value and stores it in registry 6");
+            Console.WriteLine("'andcc / orcc / orncc'");
+            Console.WriteLine("  Example: andcc %r5, 5, %r6   // bitwise operator & , stores result in registry 6, same rules apply as with addition, orncc might not work");
+            Console.WriteLine("'slr'");
+            Console.WriteLine("  Example: srl %r5, int x, %r22 // shift right logical operator, shifts the registry 5 value bitwise to the right x times and stores it in registry 22");    
+            Console.WriteLine("'printinf'");
+            Console.WriteLine("  Example: printinf %r4 // will show information about what %r4 contains");
         }
         static readonly Regex rxReg = new Regex(@"%r\d(\d?)");
         public void FindCommand(string cm, string line)
@@ -90,6 +123,11 @@ namespace ARC
                 case "printinf": Info(line); break;
                 default: throw new FormatException();
             }
+            PC.SetValue(PC.Value() + 1);
+            if(PSR.Value() == 1)
+            {
+                rgs[0].SetValue(0);
+            }
         }
         void Info(string line) // special command to check registry values from console
         {
@@ -97,7 +135,7 @@ namespace ARC
             int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
             if (firstreg > 31)
             {
-                throw new FormatException();
+                throw new FormatException("registry number out of bounds");
             }
             rgs[firstreg].printinf();
         }
@@ -105,64 +143,95 @@ namespace ARC
         {
             line = line.Replace("ld ", "");
             str.Append("10");
-                
-            int toLoad = int.Parse(line.Split(',')[0]);
+            int toLoad = 0;
 
-            MatchCollection match = rxReg.Matches(line);
-            int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-            if (firstreg > 31)
-            {
-                throw new FormatException();
-            }
-            for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-            {
-                str.Append('0');
-            }
-            str.Append(Convert.ToString(firstreg, 2));
 
-            str.Append("000000");
 
-            str.Append("00000"); // %rs1 = %r0 ( int + 0 ) da habar nu am 
+            int firstreg = FindReg(line, 0);
 
-            str.Append('1');
+            str.Append("000000"); // op
 
-            for (int i = 0; i < 13 - Convert.ToString(toLoad, 2).Length; i++)
+            str.Append("00000"); // %rs1 = %r0 ( int + 0 ) (?) 
+
+            if (line.Contains("["))
             {
                 str.Append('0');
+                string memID = line.Split(']')[0].Split('[')[1];
+                int i = 0;
+                int memlocation = -1;
+                foreach (Memory m in Mem)
+                {
+                    if (m.Identifier == memID)
+                    {
+                        memlocation = i;
+                        toLoad = m.Value;
+                        break;
+                    }
+                    i++;
+                }
+                if(memlocation == -1)
+                {
+                    throw new Exception("this part of the memory is not initialized!!!");
+                }
+                sp.SetValue(memlocation);
+                str.Append("00000000");
+                str.Append("01110"); // %rs2 will be %sp that shows where memory fragment we are loading is located
+
+                rgs[firstreg].SetValue(toLoad);
+                return;
             }
-            str.Append(Convert.ToString(toLoad, 2));
-
-
+            else
+            {
+                str.Append('1');
+                toLoad = FindNumber(line);
+            }
             rgs[firstreg].SetValue(toLoad);
             
         }
-        void ST(string line) // WiP memorie 
+        void ST(string line) // possibly bad output, i use %sp as target registry (rd) , rs1 is %r0 and rs2 is source 
         {
-            //str.Append("10");
+            str.Append("10");
 
-            //int toSt = int.Parse(line.Split(' ')[1].Split(',')[0]);
+            string toSt = line.Split('[')[1].Split(']')[0];
+            Memory Store = new Memory(0, "null");
+            int Location = Mem.Count;
+            bool found = false;
+            int i = 0;
+            foreach (Memory m in Mem)
+            {
+                if (m.Identifier == toSt)
+                {
+                    Location = i;
+                    Store = m;
+                    found = true;
+                    break;
+                }
+                i++;
+            }
+            if (!found)
+            {
+                Store = new Memory(0, toSt);
+            }
 
-            //MatchCollection match = rxReg.Matches(line);
-            //int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-            //if (firstreg > 31)
-            //{
-            //    throw new FormatException();
-            //}
-            //for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-            //{
-            //    str.Append('0');
-            //}
-            //str.Append(Convert.ToString(firstreg, 2));
+            MatchCollection match = rxReg.Matches(line);
 
-            //str.Append("000100");
+            sp.SetValue(Location);
 
-            //str.Append('1');
+            str.Append("01110"); // %sp
 
-            //for (int i = 0; i < 13 - Convert.ToString(toLoad, 2).Length; i++)
-            //{
-            //    str.Append('0');
-            //}
-            //str.Append(Convert.ToString(toLoad, 2).Length);
+            str.Append("000100"); // op
+
+            str.Append("00000"); // %r0
+
+            str.Append('0');
+
+            str.Append("00000000");
+
+            int firstreg = FindReg(line, 0);
+
+            Store.Value = rgs[firstreg].Value();
+
+            Mem.Add(Store);
 
         }
         void ADDCC(string line)
@@ -170,75 +239,28 @@ namespace ARC
             line = line.Replace("addcc ", "");
             str.Append("11");
             MatchCollection match = rxReg.Matches(line);
-            int originReg = int.Parse(match[match.Count - 1].Value.Replace("%r", ""));
-            if (originReg > 31)
-            {
-                throw new FormatException();
-            }
-            for (int i = 0; i < 5 - Convert.ToString(originReg, 2).Length; i++)
-            {
-                str.Append('0');
-            }
-            str.Append(Convert.ToString(originReg, 2));
+            int originReg = FindReg(line, 3);
             str.Append("010000");
             if (match.Count > 2)
             {
-                int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-                if (firstreg > 31)
-                {
-                    throw new FormatException();
-                }
-                for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(firstreg, 2));
-                int secondreg = int.Parse(match[1].Value.Replace("%r", ""));
-                if (secondreg > 31)
-                {
-                    throw new FormatException();
-                }
-                    
+                int firstreg = FindReg(line, 0);
+
                 str.Append('0');
 
                 str.Append("00000000");
-                for (int i = 0; i < 5 - Convert.ToString(secondreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(secondreg, 2));
+
+                int secondreg = FindReg(line, 1);
 
                 rgs[originReg].SetValue(rgs[firstreg].Value() + rgs[secondreg].Value());
             }
             else
             {
-                int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-                if (firstreg > 31)
-                {
-                    throw new FormatException();
-                }
-                for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(firstreg, 2));
-                int toAdd = 0;
-                for (int i = 0; i < 3; i++)
-                {
-                    if (int.TryParse(line.Replace(" ", "").Split(',')[i], out toAdd))
-                    {
-                        break;
-                    }
-                }
+                int firstreg = FindReg(line, 0);
 
                 str.Append('1');
 
-                string stradd = Convert.ToString(toAdd, 2);
-                for(int i = 0; i < 13 - stradd.Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(stradd);
+                int toAdd = FindNumber(line);
+
                 rgs[originReg].SetValue(rgs[firstreg].Value() + toAdd);
             }
         }
@@ -248,153 +270,68 @@ namespace ARC
 
             str.Append("11");
             MatchCollection match = rxReg.Matches(line);
-            int originReg = int.Parse(match[match.Count - 1].Value.Replace("%r", ""));
-            if (originReg > 31)
-            {
-                throw new FormatException();
-            }
-            for (int i = 0; i < 5 - Convert.ToString(originReg, 2).Length; i++)
-            {
-                str.Append('0');
-            }
-            str.Append(Convert.ToString(originReg, 2));
+            int originReg = FindReg(line, 3);
             str.Append("010010"); // op
             if (match.Count > 2)
             {
-                int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-                if (firstreg > 31)
-                {
-                    throw new FormatException();
-                }
-                for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(firstreg, 2));
-                int secondreg = int.Parse(match[1].Value.Replace("%r", ""));
-                if (secondreg > 31)
-                {
-                    throw new FormatException();
-                }
+                int firstreg = FindReg(line, 0);
 
                 str.Append('0');
 
                 str.Append("00000000");
-                for (int i = 0; i < 5 - Convert.ToString(secondreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(secondreg, 2));
+
+                int secondreg = FindReg(line, 1);
 
                 rgs[originReg].SetValue(rgs[firstreg].Value() | rgs[secondreg].Value());
             }
             else
             {
-                int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-                if (firstreg > 31)
-                {
-                    throw new FormatException();
-                }
-                for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(firstreg, 2));
-                int toAdd = 0;
-                for (int i = 0; i < 3; i++)
-                {
-                    if (int.TryParse(line.Replace(" ", "").Split(',')[i], out toAdd))
-                    {
-                        break;
-                    }
-                }
+                int firstreg = FindReg(line, 0);
 
                 str.Append('1');
 
-                string stradd = Convert.ToString(toAdd, 2);
-                for (int i = 0; i < 13 - stradd.Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(stradd);
+                int toAdd = FindNumber(line);
+
                 rgs[originReg].SetValue(rgs[firstreg].Value() | toAdd);
             }
         }
-        void ORNCC(string line)
+        void ORNCC(string line) // not sure how to interpret it 
         {
+            //       int i NOR int v:
+            //      i: 0000000000000000000001010
+            //      v: 0000000000000000001011101
+            // result: 1111111111111111110100000  (?)
+
+
             line = line.Replace("orncc ", "");
             str.Append("11");
             MatchCollection match = rxReg.Matches(line);
-            int originReg = int.Parse(match[match.Count - 1].Value.Replace("%r", ""));
-            if (originReg > 31)
-            {
-                throw new FormatException();
-            }
-            for (int i = 0; i < 5 - Convert.ToString(originReg, 2).Length; i++)
-            {
-                str.Append('0');
-            }
-            str.Append(Convert.ToString(originReg, 2));
+            int originReg = FindReg(line, 3);
+
             str.Append("010001"); // op
+
             if (match.Count > 2)
             {
-                int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-                if (firstreg > 31)
-                {
-                    throw new FormatException();
-                }
-                for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(firstreg, 2));
-                int secondreg = int.Parse(match[1].Value.Replace("%r", ""));
-                if (secondreg > 31)
-                {
-                    throw new FormatException();
-                }
+                int firstreg = FindReg(line, 0);
 
                 str.Append('0');
 
                 str.Append("00000000");
-                for (int i = 0; i < 5 - Convert.ToString(secondreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(secondreg, 2));
 
-                // rgs[originReg].SetValue((rgs[firstreg].Value() | rgs[secondreg].Value())); NOR W I P
+                int secondreg = FindReg(line, 1);
+
+                rgs[originReg].SetValue(~(rgs[firstreg].Value() | rgs[secondreg].Value()));
+
             }
             else
             {
-                int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-                if (firstreg > 31)
-                {
-                    throw new FormatException();
-                }
-                for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(firstreg, 2));
-                int toAdd = 0;
-                for (int i = 0; i < 3; i++)
-                {
-                    if (int.TryParse(line.Replace(" ", "").Split(',')[i], out toAdd))
-                    {
-                        break;
-                    }
-                }
+                int firstreg = FindReg(line, 0);
 
                 str.Append('1');
 
-                string stradd = Convert.ToString(toAdd, 2);
-                for (int i = 0; i < 13 - stradd.Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(stradd);
-                // rgs[originReg].SetValue(rgs[firstreg].Value() & toAdd); NOR W I P
+                int toAdd = FindNumber(line);
+
+                rgs[originReg].SetValue(~(rgs[firstreg].Value() | toAdd)); 
             }
         }
         void ANDCC(string line)
@@ -402,75 +339,29 @@ namespace ARC
             line = line.Replace("andcc ", "");
             str.Append("11");
             MatchCollection match = rxReg.Matches(line);
-            int originReg = int.Parse(match[match.Count - 1].Value.Replace("%r", ""));
-            if (originReg > 31)
-            {
-                throw new FormatException();
-            }
-            for (int i = 0; i < 5 - Convert.ToString(originReg, 2).Length; i++)
-            {
-                str.Append('0');
-            }
-            str.Append(Convert.ToString(originReg, 2));
+            int originReg = FindReg(line, 3);
+
             str.Append("010001"); // op
+
             if (match.Count > 2)
             {
-                int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-                if (firstreg > 31)
-                {
-                    throw new FormatException();
-                }
-                for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(firstreg, 2));
-                int secondreg = int.Parse(match[1].Value.Replace("%r", ""));
-                if (secondreg > 31)
-                {
-                    throw new FormatException();
-                }
+                int firstreg = FindReg(line, 0);
 
                 str.Append('0');
 
                 str.Append("00000000");
-                for (int i = 0; i < 5 - Convert.ToString(secondreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(secondreg, 2));
+
+                int secondreg = FindReg(line, 1);
 
                 rgs[originReg].SetValue(rgs[firstreg].Value() & rgs[secondreg].Value());
             }
             else
             {
-                int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-                if (firstreg > 31)
-                {
-                    throw new FormatException();
-                }
-                for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(Convert.ToString(firstreg, 2));
-                int toAdd = 0;
-                for (int i = 0; i < 3; i++)
-                {
-                    if (int.TryParse(line.Replace(" ", "").Split(',')[i], out toAdd))
-                    {
-                        break;
-                    }
-                }
-
+                int firstreg = FindReg(line, 0);
                 str.Append('1');
 
-                string stradd = Convert.ToString(toAdd, 2);
-                for (int i = 0; i < 13 - stradd.Length; i++)
-                {
-                    str.Append('0');
-                }
-                str.Append(stradd);
+                int toAdd = FindNumber(line);
+
                 rgs[originReg].SetValue(rgs[firstreg].Value() & toAdd);
             }
         }
@@ -478,46 +369,123 @@ namespace ARC
         {
             line = line.Replace("srl ", "");
             str.Append("11");
-            MatchCollection match = rxReg.Matches(line);
-            int originReg = int.Parse(match[match.Count - 1].Value.Replace("%r", ""));
-            if (originReg > 31)
-            {
-                throw new FormatException();
-            }
-            for (int i = 0; i < 5 - Convert.ToString(originReg, 2).Length; i++)
-            {
-                str.Append('0');
-            }
-            str.Append(Convert.ToString(originReg, 2));
+
+            int originReg = FindReg(line, 3);
             str.Append("100110"); // op
-            int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
-            if (firstreg > 31)
+            int firstreg = FindReg(line, 0);
+           
+            str.Append('1');
+
+            int toAdd = FindNumber(line);
+
+            rgs[originReg].SetValue(rgs[firstreg].Value() >> toAdd);
+        }
+        int FindReg(string line, int which)
+        {
+            bool nullcheck = false;
+            MatchCollection match = rxReg.Matches(line);
+            if (which == 3)
             {
-                throw new FormatException();
+                nullcheck = true;
+                which = match.Count - 1;
+            }
+            int firstreg = int.Parse(match[which].Value.Replace("%r", ""));
+            if (firstreg > 31 || firstreg == 14 || firstreg == 15)
+            {
+                throw new FormatException("Invalid registry. You can call registries from 0 to 31, with the exception of 14 and 15.");
+            }
+            if (nullcheck)
+            {
+                if(firstreg == 0)
+                {
+                    PSR.SetValue(1);
+                }               
             }
             for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
             {
                 str.Append('0');
             }
             str.Append(Convert.ToString(firstreg, 2));
+
+            return firstreg;
+        }
+        void FindReg(string line, int which, StringBuilder str2)
+        {
+            bool nullcheck = false;
+            MatchCollection match = rxReg.Matches(line);
+            if (which == 3)
+            {
+                nullcheck = true;
+                which = match.Count - 1;
+            }
+            int firstreg = int.Parse(match[which].Value.Replace("%r", ""));
+            if (firstreg > 31 || firstreg == 14 || firstreg == 15)
+            {
+                throw new FormatException("Invalid registry. You can call registries from 0 to 31, with the exception of 14 and 15.");
+            }
+            if (nullcheck)
+            {
+                if (firstreg == 0)
+                {
+                    PSR.SetValue(1);
+                }
+            }
+            for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
+            {
+                str2.Append('0');
+            }
+            str2.Append(Convert.ToString(firstreg, 2));
+        }
+        int FindNumber(string line)
+        {
             int toAdd = 0;
+            bool found = false;
             for (int i = 0; i < 3; i++)
             {
+
                 if (int.TryParse(line.Replace(" ", "").Split(',')[i], out toAdd))
                 {
+                    found = true;
                     break;
                 }
             }
-            str.Append('1');
-
+            if (!found)
+            {
+                throw new FormatException("Bad line syntax, missing integer / integer too big, use command 'help' for help.");
+            }
+            if(toAdd >= Math.Pow(2, 13)) // sethi implementation        0000 0000 00 00 0000 0000 00 | 00 0000 0000
+            {                                                         //      sethi this part            // add this part
+                StringBuilder str2 = new StringBuilder();
+                str2.Append("00");
+                FindReg(line, 3, str2);
+                str2.Append("100");
+                string add = Convert.ToString(toAdd, 2);
+                while (32 > add.Length)
+                {
+                    add = "0" + add;
+                }
+                for (int l = 22, k = 0; l > 0; l--, k++)
+                {
+                    str2.Append(add[k]);
+                }
+                str.Append("000"); // unused bits ( sethi sets highest 22, and leaves lowest 10 for another op )
+                for(int i = 10, k = 22; i > 0; i--, k++)
+                {
+                    str.Append(add[k]);
+                }
+                Console.WriteLine(str2.ToString());
+                Console.WriteLine("sethi instruction assembled automatically above");
+                return toAdd;                           
+            }
             string stradd = Convert.ToString(toAdd, 2);
             for (int i = 0; i < 13 - stradd.Length; i++)
             {
                 str.Append('0');
             }
             str.Append(stradd);
-            rgs[originReg].SetValue(rgs[firstreg].Value() << toAdd);
-        }       
+
+            return toAdd;
+        }
     }
     class Memory // wip
     {
@@ -572,6 +540,7 @@ namespace ARC
         {
             this.value = value;
             string b = Convert.ToString(value, 2);
+            bits = new char[32];
             for(int i = b.Length - 1, j = bits.Length - 1; i >= 0; i--, j--)
             {
                 bits[j] = b[i];
