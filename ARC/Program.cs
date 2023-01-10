@@ -98,12 +98,12 @@ namespace ARC
             Console.WriteLine("  Example with memory ( if there is one ) : ld [memID], %r25");
             Console.WriteLine("'st'");
             Console.WriteLine("  Example: st %r5, [memID] // stores value of registry 5 into a memory identified by it's id, id has to be between []");
-            Console.WriteLine("'addc'");
+            Console.WriteLine("'addcc'");
             Console.WriteLine("  Example: addcc %r5, 5, %r6   // adds 5 to registry 5 value and stores it in registry 6");
             Console.WriteLine("  Example: addcc %r5, %r2, %r6   // adds %r5 value to registry 2 value and stores it in registry 6");
             Console.WriteLine("'andcc / orcc / orncc'");
             Console.WriteLine("  Example: andcc %r5, 5, %r6   // bitwise operator & , stores result in registry 6, same rules apply as with addition, orncc might not work");
-            Console.WriteLine("'slr'");
+            Console.WriteLine("'srl'");
             Console.WriteLine("  Example: srl %r5, int x, %r22 // shift right logical operator, shifts the registry 5 value bitwise to the right x times and stores it in registry 22");    
             Console.WriteLine("'printinf'");
             Console.WriteLine("  Example: printinf %r4 // will show information about what %r4 contains");
