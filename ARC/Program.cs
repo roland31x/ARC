@@ -156,8 +156,6 @@ namespace ARC
             str.Append("10");
             int toLoad = 0;
 
-
-
             int firstreg = FindReg(line, 0);
 
             str.Append("000000"); // op
