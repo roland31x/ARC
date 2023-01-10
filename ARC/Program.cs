@@ -42,7 +42,8 @@ namespace ARC
         Registry rN;
         Registry sp;
         Registry Link;
-        Registry PSR;
+        PSR State { get; set; }
+
         Registry PC;
 
         List<Memory> Mem = new List<Memory>();
@@ -58,10 +59,9 @@ namespace ARC
             rN = rgs[0];
             sp = rgs[14];
             Link = rgs[15];
-            PSR = new Registry(32);
+            State = new PSR();
             PC = new Registry(33);
             rgs.Add(PC);
-            rgs.Add(PSR);
         }
         public void Reset()
         {
@@ -69,6 +69,7 @@ namespace ARC
             {
                 r.SetValue(0);
             }
+            State.Reset();
             str.Clear();
             Console.WriteLine("~machine was reset to a stable state~");
         }
@@ -121,10 +122,10 @@ namespace ARC
                 case "andcc": ANDCC(line); break;
                 case "srl": SRL(line); break;
                 case "printinf": Info(line); break;
-                default: throw new FormatException();
+                default: throw new FormatException("Invalid assembly command");
             }
             PC.SetValue(PC.Value() + 1);
-            if(PSR.Value() == 1)
+            if(State.OpNull)  // it means output registry was r0 so whatever got stored there is overwritten by 0 as soon as command is executed
             {
                 rgs[0].SetValue(0);
             }
@@ -132,10 +133,20 @@ namespace ARC
         void Info(string line) // special command to check registry values from console
         {
             MatchCollection match = rxReg.Matches(line);
+            if(match.Count == 0)
+            {
+                if (line.Split(' ')[1].ToLower() == "%psr")
+                {
+                    Console.WriteLine($"Processor State: N: {State.N()} ; Z: {State.Z()} ; V: {State.V()} ; C: {State.C()}");
+                }
+                else Console.WriteLine("Invalid registry id");
+                return;
+            }
             int firstreg = int.Parse(match[0].Value.Replace("%r", ""));
             if (firstreg > 31)
             {
-                throw new FormatException("registry number out of bounds");
+                Console.WriteLine("registry id out of bounds");
+                return;
             }
             rgs[firstreg].printinf();
         }
@@ -186,7 +197,21 @@ namespace ARC
                 toLoad = FindNumber(line);
             }
             rgs[firstreg].SetValue(toLoad);
-            
+
+            // PSR 
+            State.ResV();
+            State.SetC();
+            if (rgs[firstreg].Value() < 0)
+            {
+                State.SetN();
+            }
+            else State.ResN();
+            if (rgs[firstreg].Value() == 0 || firstreg == 0)
+            {
+                State.SetZ();
+            }
+            else State.ResZ();
+
         }
         void ST(string line) // possibly bad output, i use %sp as target registry (rd) , rs1 is %r0 and rs2 is source 
         {
@@ -231,6 +256,20 @@ namespace ARC
 
             Mem.Add(Store);
 
+            //PSR values
+            State.ResV();
+            State.SetC();
+            if (rgs[firstreg].Value() < 0)
+            {
+                State.SetN();
+            }
+            else State.ResN();
+            if (rgs[firstreg].Value() == 0 || firstreg == 0)
+            {
+                State.SetZ();
+            }
+            else State.ResZ();
+
         }
         void ADDCC(string line)
         {
@@ -248,8 +287,20 @@ namespace ARC
                 str.Append("00000000");
 
                 int secondreg = FindReg(line, 1);
-
-                rgs[originReg].SetValue(rgs[firstreg].Value() + rgs[secondreg].Value());
+                
+                checked
+                {
+                    try
+                    {
+                        rgs[originReg].SetValue(rgs[firstreg].Value() + rgs[secondreg].Value());
+                        State.ResV();
+                    }
+                    catch (OverflowException)
+                    {
+                        rgs[originReg].SetValue(rgs[firstreg].Value() + rgs[secondreg].Value());
+                        State.SetV();
+                    }
+                }
             }
             else
             {
@@ -259,8 +310,32 @@ namespace ARC
 
                 int toAdd = FindNumber(line);
 
-                rgs[originReg].SetValue(rgs[firstreg].Value() + toAdd);
+                checked
+                {
+                    try
+                    {
+                        rgs[originReg].SetValue(rgs[firstreg].Value() + toAdd);
+                        State.ResV();
+                    }
+                    catch (OverflowException)
+                    {
+                        rgs[originReg].SetValue(rgs[firstreg].Value() + toAdd);
+                        State.SetV();
+                    }
+                }
             }
+            State.ResC();
+            if (rgs[originReg].Value() < 0)
+            {
+                State.SetN();
+            }
+            else State.ResN();
+            if (rgs[originReg].Value() == 0 || originReg == 0)
+            {
+                State.SetZ();
+            }
+            else State.ResZ();
+
         }
         void ORCC(string line)
         {
@@ -292,6 +367,19 @@ namespace ARC
 
                 rgs[originReg].SetValue(rgs[firstreg].Value() | toAdd);
             }
+            // PSR check at end
+            State.ResC();
+            if (rgs[originReg].Value() < 0)
+            {
+                State.SetN();
+            }
+            else State.ResN();
+            if (rgs[originReg].Value() == 0 || originReg == 0)
+            {
+                State.SetZ();
+            }
+            else State.ResZ();
+            State.ResV(); // bitwise operators cant produce overflow ( i hope )
         }
         void ORNCC(string line) // not sure how to interpret it 
         {
@@ -332,6 +420,19 @@ namespace ARC
 
                 rgs[originReg].SetValue(~(rgs[firstreg].Value() | toAdd)); 
             }
+            // PSR check at end
+            State.ResC();
+            if (rgs[originReg].Value() < 0)
+            {
+                State.SetN();
+            }
+            else State.ResN();
+            if (rgs[originReg].Value() == 0 || originReg == 0)
+            {
+                State.SetZ();
+            }
+            else State.ResZ();
+            State.ResV(); // bitwise operators cant produce overflow ( i hope )
         }
         void ANDCC(string line)
         {
@@ -363,6 +464,20 @@ namespace ARC
 
                 rgs[originReg].SetValue(rgs[firstreg].Value() & toAdd);
             }
+
+            // PSR check at end
+            State.ResC();
+            if (rgs[originReg].Value() < 0)
+            {
+                State.SetN();
+            }
+            else State.ResN();
+            if (rgs[originReg].Value() == 0 || originReg == 0)
+            {
+                State.SetZ();
+            }
+            else State.ResZ();
+            State.ResV(); // bitwise operators cant produce overflow ( i hope )
         }
         void SRL(string line)
         {
@@ -378,6 +493,19 @@ namespace ARC
             int toAdd = FindNumber(line);
 
             rgs[originReg].SetValue(rgs[firstreg].Value() >> toAdd);
+            // PSR does its work
+            State.ResC();
+            if (rgs[originReg].Value() < 0)
+            {
+                State.SetN();
+            }
+            else State.ResN();
+            if (rgs[originReg].Value() == 0 || originReg == 0)
+            {
+                State.SetZ();
+            }
+            else State.ResZ();
+            State.ResV(); // SRL cant produce overflow ( i hope )
         }
         int FindReg(string line, int which)
         {
@@ -397,7 +525,7 @@ namespace ARC
             {
                 if(firstreg == 0)
                 {
-                    PSR.SetValue(1);
+                    
                 }               
             }
             for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
@@ -426,7 +554,7 @@ namespace ARC
             {
                 if (firstreg == 0)
                 {
-                    PSR.SetValue(1);
+                    State.OpNull = true;
                 }
             }
             for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
@@ -452,7 +580,7 @@ namespace ARC
             {
                 throw new FormatException("Bad line syntax, missing integer / integer too big, use command 'help' for help.");
             }
-            if(toAdd >= Math.Pow(2, 13)) // sethi implementation        0000 0000 00 00 0000 0000 00 | 00 0000 0000
+            if(Convert.ToString(toAdd,2).Length > 13) // sethi implementation        0000 0000 00 00 0000 0000 00 | 00 0000 0000
             {                                                         //      sethi this part            // add this part
                 StringBuilder str2 = new StringBuilder();
                 str2.Append("00");
@@ -493,6 +621,77 @@ namespace ARC
         public Memory(int value, string identifier)
         {
             Value = value; Identifier = identifier;
+        }
+    }
+    class PSR
+    {
+        public bool OpNull { get; set; } // if target registry was %r0
+        bool n { get; set; } // if last operation yielded a negative number
+        bool z { get; set; } // if last operation yielded 0
+        bool v { get; set; } // overflow state
+        bool c { get; set; } // i assume C means carry data from ALU to registry or vice-versa. 
+        public PSR()
+        {
+            OpNull = false;
+            n = false;
+            z = false;
+            v = false;
+            c = false;
+        }
+        public void Reset()
+        {
+            n = false;
+            z = false;
+            v = false;
+            c = false;
+        }
+        public bool N()
+        {
+            return n;
+        }
+        public bool Z()
+        {
+            return z;
+        }
+        public bool V()
+        {
+            return v;
+        }
+        public bool C()
+        {
+            return c;
+        }
+        public void SetZ()
+        {
+            z = true;
+        }
+        public void ResZ()
+        {
+            z = false;
+        }
+        public void SetN()
+        {
+            n = true;
+        }
+        public void ResN()
+        {
+            n = false;
+        }
+        public void SetV()
+        {
+            v = true;
+        }
+        public void ResV()
+        {
+            v = false;
+        }
+        public void SetC()
+        {
+            c = true;
+        }
+        public void ResC()
+        {
+            c = false;
         }
     }
     class Registry
@@ -540,7 +739,11 @@ namespace ARC
             this.value = value;
             string b = Convert.ToString(value, 2);
             bits = new char[32];
-            for(int i = b.Length - 1, j = bits.Length - 1; i >= 0; i--, j--)
+            for (int j = 0; j < bits.Length; j++)
+            {
+                bits[j] = '0';
+            }
+            for (int i = b.Length - 1, j = bits.Length - 1; i >= 0; i--, j--)
             {
                 bits[j] = b[i];
             }
