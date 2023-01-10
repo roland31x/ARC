@@ -213,8 +213,6 @@ namespace ARC
                 Store = new Memory(0, toSt);
             }
 
-            MatchCollection match = rxReg.Matches(line);
-
             sp.SetValue(Location);
 
             str.Append("01110"); // %sp
@@ -300,6 +298,7 @@ namespace ARC
             //       int i NOR int v:
             //      i: 0000000000000000000001010
             //      v: 0000000000000000001011101
+            //     or: 0000000000000000001011111
             // result: 1111111111111111110100000  (?)
 
 
