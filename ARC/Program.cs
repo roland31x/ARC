@@ -51,7 +51,6 @@ namespace ARC
         }
         static void LineCheck(string line, ARC arc)
         {
-            
             if (line.Replace(" ","") == ".debug")
             {
                 arc.Debug();
@@ -60,10 +59,14 @@ namespace ARC
             {
                 arc.WriteAllCommands();
             }
+            if (line.Replace(" ", "") == ".reset")
+            {
+                arc.Reset();
+                Console.WriteLine(".begin");
+            }
             if (line.Replace(" ","") == ".end")
             {
                 arc.Execute();
-                Console.WriteLine();
             }
             else
             {
@@ -103,6 +106,7 @@ namespace ARC
             Link = rgs[15];
             PC = new Registry(32);
             rgs.Add(PC);
+            Func.Add(new Memory(0, "BaseFunc", true));
         }
         void LoadMem(string line,int lineval)
         {
@@ -132,28 +136,86 @@ namespace ARC
                     i++;
                 }
             }
-            int lineval = 0;
+             //i--;
             int helper = 0;
-            while (lineval < i)
+            Stack<int> ParentFunc = new Stack<int>();
+            while (Link.Value() < Func.Count)
             {
                 try
-                {                   
-                    try
+                {
+                    int linkhelper = Link.Value();
+                    int nextfuncpos;
+                    if(Link.Value() == Func.Count - 1)
                     {
-                        Link.SetValue(Link.Value() + 1);
-                        helper = lineval;
-                        while (helper < Func[Link.Value()].Value && PC.Value() == helper)
+                        nextfuncpos = i;
+                    }
+                    else nextfuncpos = Func[Link.Value() + 1].Value;
+
+                    while (helper < nextfuncpos && PC.Value() == helper)
+                    {
+                        PC.SetValue(PC.Value() + 1);
+                        Work(GetLine(path, helper));
+                        helper++;
+                    }
+                checkcall: if (Link.Value() != linkhelper)
+                    {
+                        //if (State.J())
+                        //{
+                        //    goto jump;
+                        //}
+                        ParentFunc.Push(helper);
+
+                        linkhelper = Link.Value();
+                        if (Link.Value() == Func.Count)
                         {
-                            PC.SetValue(PC.Value() + 1);
-                            Work(GetLine(path, helper));
-                            helper++;
+                            break;
                         }
-                        lineval = PC.Value();
+                        else if (Link.Value() == Func.Count - 1)
+                        {
+                            nextfuncpos = i;
+                        }
+                        else
+                        {
+                            nextfuncpos = Func[Link.Value() + 1].Value;
+                        }
+                        helper = Func[Link.Value()].Value;
+                        PC.SetValue(helper);
+                        ExecCall(ref helper,ref nextfuncpos);
+                        goto checkcall;
                     }
-                    catch (ArgumentOutOfRangeException)
+                    else
                     {
-                        break;
+                        if (ParentFunc.Count > 0)
+                        {
+                            int checker = ParentFunc.Pop();
+                            helper = checker;
+                            bool found = false;
+                            for (int j = 0; j < Func.Count; j++)
+                            {
+                                if (Func[j].Value > checker)
+                                {
+                                    found = true;
+                                    Link.SetValue(j - 1);
+                                    PC.SetValue(helper);
+                                    nextfuncpos = Func[j].Value;
+                                    ExecCall(ref helper, ref nextfuncpos);
+                                    break;
+                                }
+                            }
+                            if (!found)
+                            {
+                                Link.SetValue(Func.Count - 1);
+                                PC.SetValue(helper);
+                                nextfuncpos = i;
+                                ExecCall(ref helper, ref nextfuncpos);
+                            }
+                        }
+                        else
+                        {
+                            Link.SetValue(Link.Value() + 1);
+                        }
                     }
+                    
                 }
                 catch (Exception e)
                 {
@@ -163,12 +225,23 @@ namespace ARC
                     File.Create(path).Dispose();
                     Console.WriteLine("You can try again:");
                     Console.WriteLine(".begin");
-                }
-
-                
+                }               
             }
-            Console.WriteLine("Looks like it compiled and executed your code, you can try another code:");
+            Console.WriteLine("Looks like it compiled and executed your code, you can try another code using the .reset command or debug the current code with .debug:");
             Console.WriteLine(".begin");
+        }
+        void ExecCall(ref int helper,ref int nextfuncpos)
+        {
+            while (helper < nextfuncpos && PC.Value() == helper)
+            {
+                PC.SetValue(PC.Value() + 1);
+                Work(GetLine(path, helper));
+                helper++;
+            }
+            if(PC.Value() != helper)
+            {
+                helper = PC.Value();
+            }
         }
         public void Reset()
         {
@@ -188,6 +261,7 @@ namespace ARC
             if (text.Contains(':'))  // doesn't need labels, only executed lines of command
             {
                 text = text.Split(':')[1];
+                text = text.Trim();
             }
             char[] sep = new char[] { ' ' };
             string first = text.Split(sep,StringSplitOptions.RemoveEmptyEntries)[0];
@@ -219,6 +293,7 @@ namespace ARC
                     }
                 }
                 else Console.WriteLine("invalid debug command syntax");
+                s = Console.ReadLine();
             }
             Console.WriteLine("~~MACHINE IN NORMAL MODE~~");
         }
@@ -256,6 +331,7 @@ namespace ARC
                 case "andcc": ANDCC(line); break;
                 case "srl": SRL(line); break;
                 case "jumpl": JUMPL(line); break;
+                case "call": CALL(line); break;
                 default: throw new FormatException("Invalid assembly command");
             }
             if(State.OpNull)  // it means output registry was r0 so whatever got stored there is overwritten by 0 as soon as command is executed
@@ -287,7 +363,7 @@ namespace ARC
         void LD(string line)
         {
             line = line.Replace("ld ", "");
-            str.Append("10");
+            str.Append("11");
             int toLoad = 0;
 
             int firstreg = FindReg(line, 0);
@@ -347,7 +423,7 @@ namespace ARC
         }
         void ST(string line) // possibly bad output, i use %sp as target registry (rd) , rs1 is %r0 and rs2 is source 
         {
-            str.Append("10");
+            str.Append("11");
 
             string toSt = line.Split('[')[1].Split(']')[0];
             Memory Store = new Memory(0, "null", false);
@@ -406,7 +482,7 @@ namespace ARC
         void ADDCC(string line)
         {
             line = line.Replace("addcc ", "");
-            str.Append("11");
+            str.Append("10");
             MatchCollection match = rxReg.Matches(line);
             int originReg = FindReg(line, 3);
             str.Append("010000");
@@ -473,7 +549,7 @@ namespace ARC
         {
             line = line.Replace("orcc ", "");
 
-            str.Append("11");
+            str.Append("10");
             MatchCollection match = rxReg.Matches(line);
             int originReg = FindReg(line, 3);
             str.Append("010010"); // op
@@ -523,7 +599,7 @@ namespace ARC
 
 
             line = line.Replace("orncc ", "");
-            str.Append("11");
+            str.Append("10");
             MatchCollection match = rxReg.Matches(line);
             int originReg = FindReg(line, 3);
 
@@ -569,7 +645,7 @@ namespace ARC
         void ANDCC(string line)
         {
             line = line.Replace("andcc ", "");
-            str.Append("11");
+            str.Append("10");
             MatchCollection match = rxReg.Matches(line);
             int originReg = FindReg(line, 3);
 
@@ -614,7 +690,7 @@ namespace ARC
         void SRL(string line)
         {
             line = line.Replace("srl ", "");
-            str.Append("11");
+            str.Append("10");
 
             int originReg = FindReg(line, 3);
             str.Append("100110"); // op
@@ -644,28 +720,48 @@ namespace ARC
             line = line.Replace("jumpl","");
             str.Append("10");
             str.Append("01111"); // target registry is always %r15
-            str.Append("111111");
+            str.Append("111000"); // op
+            str.Append("00000"); // using %r0 as 2nd registry
             MatchCollection match = rxReg.Matches(line);
             int toadd;
             if (match.Count == 0)
             {
+                str.Append('1'); // followed by simm13
                 toadd = FindNumber(line);
             }
-            else toadd = rgs[FindReg(line, 0)].Value();
-            if (line.Split(' ')[0] == "+")
+            else
             {
-                Link.SetValue(Link.Value() + toadd);
-                
+                str.Append('0');
+                toadd = rgs[FindReg(line, 0)].Value();
+            }           
+            if (line.Split(' ')[1] == "+")
+            {
+                Link.SetValue(Link.Value() + toadd);               
             }
-            if (line.Split(' ')[0] == "-")
+            else throw new Exception("Bad jumpl syntax");
+            PC.SetValue(Func[Link.Value()].Value);
+            State.SetJ();
+        }
+        void CALL(string line)
+        {
+            str.Append("01");
+            string FuncToFind = line.Split(' ')[1];
+            int f = 0;
+            foreach(Memory m in Func)
             {
-                Link.SetValue(Link.Value() - toadd);
-                if(Link.Value() < 0)
+                if(m.Identifier == FuncToFind)
                 {
-                    throw new Exception("Bad jumpl syntax");
+                    string stradd = Convert.ToString(m.Value, 2);
+                    for(int i = 0; i < 30 - stradd.Length; i++)
+                    {
+                        str.Append('0');
+                    }
+                    str.Append(stradd);
+                    Link.SetValue(f);
                 }
+                f++;
             }
-            PC.SetValue(rgs[Link.Value()].Value());
+            PC.SetValue(Func[Link.Value()].Value);
         }
         int FindReg(string line, int which)
         {
@@ -777,7 +873,7 @@ namespace ARC
         {
             using (var sr = new StreamReader(fileName))
             {
-                for (int i = 1; i < line; i++)
+                for (int i = 0; i < line; i++)
                     sr.ReadLine();
                 return sr.ReadLine();
             }
@@ -803,6 +899,7 @@ namespace ARC
         bool n { get; set; } // if last operation yielded a negative number
         bool z { get; set; } // if last operation yielded 0
         bool v { get; set; } // overflow state
+        bool j { get; set; } // check for jump
         bool c { get; set; } // i assume C means carry data from ALU to registry or vice-versa. 
         public PSR()
         {
@@ -810,6 +907,7 @@ namespace ARC
             n = false;
             z = false;
             v = false;
+            j= false;
             c = false;
         }
         public void Reset()
@@ -818,6 +916,7 @@ namespace ARC
             z = false;
             v = false;
             c = false;
+            j = false;
         }
         public bool N()
         {
@@ -834,6 +933,10 @@ namespace ARC
         public bool C()
         {
             return c;
+        }
+        public bool J()
+        {
+            return j;
         }
         public void SetZ()
         {
@@ -866,6 +969,14 @@ namespace ARC
         public void ResC()
         {
             c = false;
+        }
+        public void SetJ()
+        {
+            j = true;
+        }
+        public void ResJ()
+        {
+            j = false;
         }
     }
     class Registry
