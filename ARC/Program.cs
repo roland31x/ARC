@@ -7,25 +7,39 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Security.Policy;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Web;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace ARC
 {
     internal class Program
     {
+        readonly static string path = "rawcode.arc";
+        
         static void Main(string[] args)
         {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+            File.Create(path).Dispose();
             ARC myArc = new ARC();
-            Console.WriteLine("ARC Machine running, so far it only supports line by line assembly with no labels (WiP).");
-            Console.WriteLine("It only supports Memory / Arithmetic formats, type 'help' for more info.");
-            Console.WriteLine("Errors thrown will result in the machine registries being reset to avoid corruption."); // wip CALL / BRANCH , sethi is automatically handled 
+            Console.WriteLine("ARC Machine running, machine will execute code from start, to change entry point start code with call functionname");
+            Console.WriteLine("Compiling will not happen until the user inputs the .end command after which the machine will spit out all instructions as a 32bit sequence for each line executed.");
+            Console.WriteLine("To enter debug mode write .debug (used to check what the machine actually did after compiling code)");
+            Console.WriteLine("Type '.help' for available commands and their functionalities and more details");
+            Console.WriteLine("! Compilation errors will reset ARC CPU registries, memory should be unaffected (emphasis on should)"); // wip CALL / BRANCH , sethi is automatically handled 
+            Console.WriteLine(".begin             ! your code will start from here");
             while (true)
             {
                 try
                 {
-                    myArc.Work(Console.ReadLine());
+                    string toCheck = Console.ReadLine();
+                    LineCheck(toCheck, myArc);
                 }
                 catch (Exception e) 
                 { 
@@ -35,9 +49,35 @@ namespace ARC
             }
 
         }
+        static void LineCheck(string line, ARC arc)
+        {
+            
+            if (line.Replace(" ","") == ".debug")
+            {
+                arc.Debug();
+            }
+            if (line.Replace(" ","") == ".help")
+            {
+                arc.WriteAllCommands();
+            }
+            if (line.Replace(" ","") == ".end")
+            {
+                arc.Execute();
+                Console.WriteLine();
+            }
+            else
+            {
+                using (StreamWriter sw = new StreamWriter(path, true))
+                {
+                    sw.WriteLine(line.Split('!')[0]); // removes comments;
+                }
+            }
+        }
     }
     class ARC
     {
+        readonly static string path = "rawcode.arc";
+
         List<Registry> rgs = new List<Registry>();
         Registry rN;
         Registry sp;
@@ -47,10 +87,12 @@ namespace ARC
         Registry PC;
 
         List<Memory> Mem = new List<Memory>();
+        List<Memory> Func = new List<Memory>();
 
         StringBuilder str { get; set; }
         public ARC()
         {
+            State = new PSR();
             str = new StringBuilder();
             for(int i = 0; i < 32; i++)
             {
@@ -59,9 +101,74 @@ namespace ARC
             rN = rgs[0];
             sp = rgs[14];
             Link = rgs[15];
-            State = new PSR();
-            PC = new Registry(33);
+            PC = new Registry(32);
             rgs.Add(PC);
+        }
+        void LoadMem(string line,int lineval)
+        {
+            if (line.Contains(":"))
+            {
+                if (int.TryParse(line.Split(':')[1], out int value))
+                {
+                    Mem.Add(new Memory(value, line.Split(':')[0], false));
+                    Func.Add(new Memory(lineval, line.Split(':')[0], false));
+                }
+                else
+                {
+                    
+                    Func.Add(new Memory(lineval, line.Split(':')[0], true));
+                }
+            }
+            else return;
+        }
+        public void Execute()
+        {
+            int i = 0;
+            using (StreamReader sr = new StreamReader(path))
+            {
+                while (!sr.EndOfStream)
+                {
+                    LoadMem(sr.ReadLine(), i);
+                    i++;
+                }
+            }
+            int lineval = 0;
+            int helper = 0;
+            while (lineval < i)
+            {
+                try
+                {                   
+                    try
+                    {
+                        Link.SetValue(Link.Value() + 1);
+                        helper = lineval;
+                        while (helper < Func[Link.Value()].Value && PC.Value() == helper)
+                        {
+                            PC.SetValue(PC.Value() + 1);
+                            Work(GetLine(path, helper));
+                            helper++;
+                        }
+                        lineval = PC.Value();
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        break;
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e.Message);
+                    Reset();
+                    File.Delete(path);
+                    File.Create(path).Dispose();
+                    Console.WriteLine("You can try again:");
+                    Console.WriteLine(".begin");
+                }
+
+                
+            }
+            Console.WriteLine("Looks like it compiled and executed your code, you can try another code:");
+            Console.WriteLine(".begin");
         }
         public void Reset()
         {
@@ -71,30 +178,54 @@ namespace ARC
             }
             State.Reset();
             str.Clear();
+            Mem = new List<Memory>();
+            Func = new List<Memory>();
             Console.WriteLine("~machine was reset to a stable state~");
         }
         public void Work(string text)
-        {
-            if(text == "help")
+        {        
+            
+            if (text.Contains(':'))  // doesn't need labels, only executed lines of command
             {
-                WriteAllCommands();
-                return;
+                text = text.Split(':')[1];
             }
-            text = text.Split('!')[0]; // removes comments
-            
-            string first = text.Split(' ')[0];
-            
+            char[] sep = new char[] { ' ' };
+            string first = text.Split(sep,StringSplitOptions.RemoveEmptyEntries)[0];
 
             FindCommand(first,text);
 
             Console.WriteLine(str.ToString());
             str.Clear();
         }
-
-        private void WriteAllCommands()
+        public void Debug()
         {
-           // Console.WriteLine()
-            Console.WriteLine();
+            Console.WriteLine("~~MACHINE IN DEBUG MODE~~");
+            Console.WriteLine("you can only use the commands 'printinf' and 'meminf' in this mode, it will show information about registry, and memory");
+            Console.WriteLine("  Example: printinf %r4 // will show information about what %r4 contains (does not actually do anything within the machine it's just to check if operations were executed).");
+            Console.WriteLine("  Example: meminf [MEMID] // shows info about memory fragment");
+            Console.WriteLine("to end debug mode write '.enddebug'");
+            string s = Console.ReadLine();
+            while(s != ".enddebug")
+            {
+                if(s.Split(' ')[0] == "printinf")
+                {
+                    Info(s);
+                }
+                if (s.Split(' ')[0] == "meminf")
+                {
+                    foreach (Memory m in Mem)
+                    {
+                        Console.WriteLine(m.ToString());
+                    }
+                }
+                else Console.WriteLine("invalid debug command syntax");
+            }
+            Console.WriteLine("~~MACHINE IN NORMAL MODE~~");
+        }
+        public void WriteAllCommands()
+        {
+            Console.WriteLine("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+            Console.WriteLine("ARC Help page: ( this doesn't get compiled, just like the .debug menu");
             Console.WriteLine($"Commands available:{Environment.NewLine}'ld' {Environment.NewLine}  Example: ld 5, %r25 // loads value 5 into registry 25, there are 31 of them and 14 and 15 cannot be used either");
             Console.WriteLine("  Example with memory ( if there is one ) : ld [memID], %r25");
             Console.WriteLine("'st'");
@@ -107,7 +238,10 @@ namespace ARC
             Console.WriteLine("'srl'");
             Console.WriteLine("  Example: srl %r5, int x, %r22 // shift right logical operator, shifts the registry 5 value bitwise to the right x times and stores it in registry 22");    
             Console.WriteLine("'printinf'");
-            Console.WriteLine("  Example: printinf %r4 // will show information about what %r4 contains");
+            Console.WriteLine("  Example: printinf %r4 // will show information about what %r4 contains (does not actually do anything within the machine it's just to check if operations were executed).");
+
+            Console.WriteLine("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        
         }
         static readonly Regex rxReg = new Regex(@"%r\d(\d?)");
         public void FindCommand(string cm, string line)
@@ -121,13 +255,13 @@ namespace ARC
                 case "orcc": ORCC(line); break;
                 case "andcc": ANDCC(line); break;
                 case "srl": SRL(line); break;
-                case "printinf": Info(line); break;
+                case "jumpl": JUMPL(line); break;
                 default: throw new FormatException("Invalid assembly command");
             }
-            PC.SetValue(PC.Value() + 1);
             if(State.OpNull)  // it means output registry was r0 so whatever got stored there is overwritten by 0 as soon as command is executed
             {
                 rgs[0].SetValue(0);
+                State.OpNull = false;
             }
         }
         void Info(string line) // special command to check registry values from console
@@ -216,7 +350,7 @@ namespace ARC
             str.Append("10");
 
             string toSt = line.Split('[')[1].Split(']')[0];
-            Memory Store = new Memory(0, "null");
+            Memory Store = new Memory(0, "null", false);
             int Location = Mem.Count;
             bool found = false;
             int i = 0;
@@ -233,7 +367,7 @@ namespace ARC
             }
             if (!found)
             {
-                Store = new Memory(0, toSt);
+                Store = new Memory(0, toSt, false);
             }
 
             sp.SetValue(Location);
@@ -505,6 +639,34 @@ namespace ARC
             else State.ResZ();
             State.ResV(); // SRL cant produce overflow ( i hope )
         }
+        void JUMPL(string line)
+        {
+            line = line.Replace("jumpl","");
+            str.Append("10");
+            str.Append("01111"); // target registry is always %r15
+            str.Append("111111");
+            MatchCollection match = rxReg.Matches(line);
+            int toadd;
+            if (match.Count == 0)
+            {
+                toadd = FindNumber(line);
+            }
+            else toadd = rgs[FindReg(line, 0)].Value();
+            if (line.Split(' ')[0] == "+")
+            {
+                Link.SetValue(Link.Value() + toadd);
+                
+            }
+            if (line.Split(' ')[0] == "-")
+            {
+                Link.SetValue(Link.Value() - toadd);
+                if(Link.Value() < 0)
+                {
+                    throw new Exception("Bad jumpl syntax");
+                }
+            }
+            PC.SetValue(rgs[Link.Value()].Value());
+        }
         int FindReg(string line, int which)
         {
             bool nullcheck = false;
@@ -523,7 +685,7 @@ namespace ARC
             {
                 if(firstreg == 0)
                 {
-                    
+                    State.OpNull = true;
                 }               
             }
             for (int i = 0; i < 5 - Convert.ToString(firstreg, 2).Length; i++)
@@ -611,14 +773,28 @@ namespace ARC
 
             return toAdd;
         }
+        string GetLine(string fileName, int line)
+        {
+            using (var sr = new StreamReader(fileName))
+            {
+                for (int i = 1; i < line; i++)
+                    sr.ReadLine();
+                return sr.ReadLine();
+            }
+        }
     }
     class Memory // wip
     {
         public int Value { get; set; }
+        public bool isFunc { get; set; }
         public string Identifier { get; set; }
-        public Memory(int value, string identifier)
+        public Memory(int value, string identifier, bool f)
         {
-            Value = value; Identifier = identifier;
+            Value = value; Identifier = identifier; isFunc = f;
+        }
+        public override string ToString()
+        {
+            return $"[{Identifier}] stores {Value}, value is stored function location: {isFunc}";
         }
     }
     class PSR
@@ -728,7 +904,7 @@ namespace ARC
                 Console.Write(bits[i]);
             }
             Console.WriteLine();
-            if (isNull) { Console.WriteLine("This registry is %r0."); }
+            if (isNull) { Console.WriteLine("This registry is %r0 it will always contain 0."); }
             if (isSp) { Console.WriteLine("This registry is the Sp registry"); }
             if (isLink) { Console.WriteLine("This registry is the Link registry"); }
         }
@@ -746,8 +922,5 @@ namespace ARC
                 bits[j] = b[i];
             }
         }
-    }
-
-
-    
+    }    
 }
