@@ -28,11 +28,11 @@ namespace ARC
             }
             File.Create(path).Dispose();
             ARC myArc = new ARC();
-            Console.WriteLine("ARC Machine running, machine will execute code from start, to change entry point start code with call functionname");
-            Console.WriteLine("Compiling will not happen until the user inputs the .end command after which the machine will spit out all instructions as a 32bit sequence for each line executed.");
-            Console.WriteLine("To enter debug mode write .debug (used to check what the machine actually did after compiling code)");
-            Console.WriteLine("Type '.help' for available commands and their functionalities and more details");
-            Console.WriteLine("! Compilation errors will reset ARC CPU registries, memory should be unaffected (emphasis on should)"); // wip CALL / BRANCH , sethi is automatically handled 
+            Console.WriteLine("ARC Machine running, machine will execute code from start, to change entry point start code with 'ba functionname'");
+            Console.WriteLine("Compiling will not happen until the user inputs the .end command after which you'll see the machine compiled code (i hope).");
+            Console.WriteLine("To enter debug mode use .debug (used to check what the machine actually did after compiling code)");
+            Console.WriteLine("Type '.help' to get told to read the README.MD");
+            Console.WriteLine("! Compilation errors will reset ARC CPU registries and memory");
             Console.WriteLine(".begin             ! your code will start from here");
             while (true)
             {
@@ -55,16 +55,18 @@ namespace ARC
             {
                 arc.Debug();
             }
-            if (line.Replace(" ","") == ".help")
+            else if (line.Replace(" ","") == ".help")
             {
                 arc.WriteAllCommands();
             }
-            if (line.Replace(" ", "") == ".reset")
+            else if (line.Replace(" ", "") == ".reset")
             {
                 arc.Reset();
+                File.Delete(path);
+                File.Create(path).Dispose();
                 Console.WriteLine(".begin");
             }
-            if (line.Replace(" ","") == ".end")
+            else if (line.Replace(" ","") == ".end")
             {
                 arc.Execute();
             }
@@ -86,7 +88,7 @@ namespace ARC
         Registry sp;
         Registry Link;
         PSR State { get; set; }
-
+        Driver Exe { get; set; }
         Registry PC;
 
         List<Memory> Mem = new List<Memory>();
@@ -101,6 +103,7 @@ namespace ARC
             {
                 rgs.Add(new Registry(i));
             }
+            Exe = new Driver(this);
             rN = rgs[0];
             sp = rgs[14];
             Link = rgs[15];
@@ -136,111 +139,50 @@ namespace ARC
                     i++;
                 }
             }
-             //i--;
-            int helper = 0;
-            Stack<int> ParentFunc = new Stack<int>();
-            while (Link.Value() < Func.Count)
+            Func.Add(new Memory(i, "$END$", true));
+            try
             {
-                try
-                {
-                    int linkhelper = Link.Value();
-                    int nextfuncpos;
-                    if(Link.Value() == Func.Count - 1)
-                    {
-                        nextfuncpos = i;
-                    }
-                    else nextfuncpos = Func[Link.Value() + 1].Value;
-
-                    while (helper < nextfuncpos && PC.Value() == helper)
-                    {
-                        PC.SetValue(PC.Value() + 1);
-                        Work(GetLine(path, helper));
-                        helper++;
-                    }
-                checkcall: if (Link.Value() != linkhelper)
-                    {
-                        //if (State.J())
-                        //{
-                        //    goto jump;
-                        //}
-                        ParentFunc.Push(helper);
-
-                        linkhelper = Link.Value();
-                        if (Link.Value() == Func.Count)
-                        {
-                            break;
-                        }
-                        else if (Link.Value() == Func.Count - 1)
-                        {
-                            nextfuncpos = i;
-                        }
-                        else
-                        {
-                            nextfuncpos = Func[Link.Value() + 1].Value;
-                        }
-                        helper = Func[Link.Value()].Value;
-                        PC.SetValue(helper);
-                        ExecCall(ref helper,ref nextfuncpos);
-                        goto checkcall;
-                    }
-                    else
-                    {
-                        if (ParentFunc.Count > 0)
-                        {
-                            int checker = ParentFunc.Pop();
-                            helper = checker;
-                            bool found = false;
-                            for (int j = 0; j < Func.Count; j++)
-                            {
-                                if (Func[j].Value > checker)
-                                {
-                                    found = true;
-                                    Link.SetValue(j - 1);
-                                    PC.SetValue(helper);
-                                    nextfuncpos = Func[j].Value;
-                                    ExecCall(ref helper, ref nextfuncpos);
-                                    break;
-                                }
-                            }
-                            if (!found)
-                            {
-                                Link.SetValue(Func.Count - 1);
-                                PC.SetValue(helper);
-                                nextfuncpos = i;
-                                ExecCall(ref helper, ref nextfuncpos);
-                            }
-                        }
-                        else
-                        {
-                            Link.SetValue(Link.Value() + 1);
-                        }
-                    }
-                    
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine(e.Message);
-                    Reset();
-                    File.Delete(path);
-                    File.Create(path).Dispose();
-                    Console.WriteLine("You can try again:");
-                    Console.WriteLine(".begin");
-                }               
+                ExecAll();
+                Console.WriteLine("Looks like it compiled and executed your code, use .reset to reset the machine ( if you don't registry values and memory values might or might not remained stored )");
+                Console.WriteLine("Use .debug to check registry and memory");
+                Console.WriteLine(".begin");
             }
-            Console.WriteLine("Looks like it compiled and executed your code, you can try another code using the .reset command or debug the current code with .debug:");
-            Console.WriteLine(".begin");
+            catch(Exception e)
+            {
+                Console.WriteLine(e.Message);
+            }
         }
-        void ExecCall(ref int helper,ref int nextfuncpos)
+        void ExecAll()
         {
-            while (helper < nextfuncpos && PC.Value() == helper)
+            int toExec = 0;
+            while(toExec < Func[Func.Count - 1].Value)
             {
-                PC.SetValue(PC.Value() + 1);
-                Work(GetLine(path, helper));
-                helper++;
-            }
-            if(PC.Value() != helper)
-            {
-                helper = PC.Value();
+                
+                Work(GetLine(path,Exe.CurrentLine));
+                if(PC.Value() != Exe.CurrentFunc)
+                {
+                    if(PC.Value() >= Func.Count - 1)
+                    {
+                        return;
+                    }
+                    Exe.CurrentLine = Func[PC.Value()].Value;
+                    Exe.CurrentFunc = PC.Value();
+                    toExec = Exe.CurrentLine;
+                    State.ResJ(); // this if statement only triggers for CALL instruction
+                    continue;
+                }
+                if (State.J())
+                {
+                    State.ResJ();
+                }
+                else Exe.CurrentLine++;
+                if (Exe.CurrentLine == Func[Exe.CurrentFunc + 1].Value)
+                {
+                    Exe.CurrentFunc += 1;
+                    Link.SetValue(Func[Exe.CurrentFunc].Value);
+                    PC.SetValue(Exe.CurrentFunc);
+                }
+                toExec = Exe.CurrentLine;
             }
         }
         public void Reset()
@@ -273,48 +215,31 @@ namespace ARC
         }
         public void Debug()
         {
-            Console.WriteLine("~~MACHINE IN DEBUG MODE~~");
-            Console.WriteLine("you can only use the commands 'printinf' and 'meminf' in this mode, it will show information about registry, and memory");
-            Console.WriteLine("  Example: printinf %r4 // will show information about what %r4 contains (does not actually do anything within the machine it's just to check if operations were executed).");
-            Console.WriteLine("  Example: meminf [MEMID] // shows info about memory fragment");
-            Console.WriteLine("to end debug mode write '.enddebug'");
-            string s = Console.ReadLine();
-            while(s != ".enddebug")
+            Console.WriteLine("~~DEBUG START ~~");
+            Console.WriteLine("~REGISTRIES~");
+            foreach(Registry reg in rgs)
             {
-                if(s.Split(' ')[0] == "printinf")
-                {
-                    Info(s);
-                }
-                if (s.Split(' ')[0] == "meminf")
-                {
-                    foreach (Memory m in Mem)
-                    {
-                        Console.WriteLine(m.ToString());
-                    }
-                }
-                else Console.WriteLine("invalid debug command syntax");
-                s = Console.ReadLine();
+                Console.WriteLine(reg.ToString());
             }
-            Console.WriteLine("~~MACHINE IN NORMAL MODE~~");
+            Console.WriteLine("~MEMORY FRAGMENTS~");
+            foreach(Memory m in Func)
+            {
+                Console.WriteLine(m.ToString());
+            }
+            foreach (Memory m in Mem)
+            {
+                Console.WriteLine(m.ToString());
+            }
+            Console.WriteLine("~~PSR~~");
+            Console.WriteLine(State.ToString());
+            Console.WriteLine("~~DEBUG END~~");
         }
         public void WriteAllCommands()
         {
             Console.WriteLine("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
             Console.WriteLine("ARC Help page: ( this doesn't get compiled, just like the .debug menu");
-            Console.WriteLine($"Commands available:{Environment.NewLine}'ld' {Environment.NewLine}  Example: ld 5, %r25 // loads value 5 into registry 25, there are 31 of them and 14 and 15 cannot be used either");
-            Console.WriteLine("  Example with memory ( if there is one ) : ld [memID], %r25");
-            Console.WriteLine("'st'");
-            Console.WriteLine("  Example: st %r5, [memID] // stores value of registry 5 into a memory identified by it's id, id has to be between []");
-            Console.WriteLine("'addcc'");
-            Console.WriteLine("  Example: addcc %r5, 5, %r6   // adds 5 to registry 5 value and stores it in registry 6");
-            Console.WriteLine("  Example: addcc %r5, %r2, %r6   // adds %r5 value to registry 2 value and stores it in registry 6");
-            Console.WriteLine("'andcc / orcc / orncc'");
-            Console.WriteLine("  Example: andcc %r5, 5, %r6   // bitwise operator & , stores result in registry 6, same rules apply as with addition, orncc might not work");
-            Console.WriteLine("'srl'");
-            Console.WriteLine("  Example: srl %r5, int x, %r22 // shift right logical operator, shifts the registry 5 value bitwise to the right x times and stores it in registry 22");    
-            Console.WriteLine("'printinf'");
-            Console.WriteLine("  Example: printinf %r4 // will show information about what %r4 contains (does not actually do anything within the machine it's just to check if operations were executed).");
-
+            Console.WriteLine($"Unfortunately this got a bit more complicated so i wrote documentation on the github README.MD");
+            Console.WriteLine($"Github link: https://github.com/roland31x/ARC/tree/full_arc_build ");
             Console.WriteLine("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         
         }
@@ -332,8 +257,14 @@ namespace ARC
                 case "srl": SRL(line); break;
                 case "jumpl": JUMPL(line); break;
                 case "call": CALL(line); break;
+                case "ba": BA(line); break;
+                case "bvs": BVS(line); break;
+                case "bneg": BNEG(line); break;
+                case "be": BE(line); break;
+                case "bcs": BCS(line); break;
                 default: throw new FormatException("Invalid assembly command");
             }
+            Console.WriteLine(line);
             if(State.OpNull)  // it means output registry was r0 so whatever got stored there is overwritten by 0 as soon as command is executed
             {
                 rgs[0].SetValue(0);
@@ -407,19 +338,19 @@ namespace ARC
             rgs[firstreg].SetValue(toLoad);
 
             // PSR 
+            State.ResJ();
             State.ResV();
-            State.SetC();
+
             if (rgs[firstreg].Value() < 0)
             {
                 State.SetN();
             }
             else State.ResN();
-            if (rgs[firstreg].Value() == 0 || firstreg == 0)
+            if (rgs[firstreg].Value() == 0)
             {
                 State.SetZ();
             }
             else State.ResZ();
-
         }
         void ST(string line) // possibly bad output, i use %sp as target registry (rd) , rs1 is %r0 and rs2 is source 
         {
@@ -464,15 +395,16 @@ namespace ARC
 
             Mem.Add(Store);
 
-            //PSR values
+            // PSR 
+            State.ResJ();
             State.ResV();
-            State.SetC();
+
             if (rgs[firstreg].Value() < 0)
             {
                 State.SetN();
             }
             else State.ResN();
-            if (rgs[firstreg].Value() == 0 || firstreg == 0)
+            if (rgs[firstreg].Value() == 0)
             {
                 State.SetZ();
             }
@@ -577,6 +509,7 @@ namespace ARC
             }
             // PSR check at end
             State.ResC();
+            State.ResJ();
             if (rgs[originReg].Value() < 0)
             {
                 State.SetN();
@@ -630,6 +563,7 @@ namespace ARC
             }
             // PSR check at end
             State.ResC();
+            State.ResJ();
             if (rgs[originReg].Value() < 0)
             {
                 State.SetN();
@@ -675,12 +609,13 @@ namespace ARC
 
             // PSR check at end
             State.ResC();
+            State.ResJ();
             if (rgs[originReg].Value() < 0)
             {
                 State.SetN();
             }
             else State.ResN();
-            if (rgs[originReg].Value() == 0 || originReg == 0)
+            if (rgs[originReg].Value() == 0)
             {
                 State.SetZ();
             }
@@ -701,14 +636,16 @@ namespace ARC
             int toAdd = FindNumber(line);
 
             rgs[originReg].SetValue(rgs[firstreg].Value() >> toAdd);
+           
             // PSR does its work
             State.ResC();
+            State.ResJ();
             if (rgs[originReg].Value() < 0)
             {
                 State.SetN();
             }
             else State.ResN();
-            if (rgs[originReg].Value() == 0 || originReg == 0)
+            if (rgs[originReg].Value() == 0)
             {
                 State.SetZ();
             }
@@ -736,10 +673,162 @@ namespace ARC
             }           
             if (line.Split(' ')[1] == "+")
             {
-                Link.SetValue(Link.Value() + toadd);               
+                Exe.CurrentLine = Link.Value() + toadd;
+                int f = 0;
+                foreach (Memory m in Func)
+                {
+                    if (m.Value > Link.Value())
+                    {
+                        f--;
+                        PC.SetValue(f);
+                        Exe.CurrentFunc = f;
+                        break;
+                    }
+                    f++;
+                }
             }
             else throw new Exception("Bad jumpl syntax");
-            PC.SetValue(Func[Link.Value()].Value);
+            State.SetJ();
+            State.ResN();
+            State.ResV();
+            State.ResC();
+            State.ResZ();
+        }
+        void BNEG(string line)
+        {
+            str.Append("000"); // 00 + unused 0
+
+            str.Append("0110"); // bneg cond
+
+            str.Append("010"); // branch op2
+
+            State.ResJ(); // cannot carry J if condition doesns't trigger
+
+            if (State.N())
+            {
+                BRANCHDEF(line);
+            }
+            else str.Append("0000000000000000000000"); // displacement will be 0 coz condition is not met i guess? 
+
+            // psr values N,V,C,Z, J is set in BRANCHDEF it it triggers
+            State.ResN();
+            State.ResV();
+            State.ResC();
+            State.ResZ();
+
+        }
+        void BVS(string line)
+        {
+            str.Append("000"); // 00 + unused 0
+
+            str.Append("0111"); // bvs cond
+
+            str.Append("010"); // branch op2
+
+            State.ResJ(); // cannot carry J if condition doesns't trigger
+
+            if (State.V())
+            {
+                BRANCHDEF(line);
+            }
+            else str.Append("0000000000000000000000"); // displacement will be 0 coz condition is not met i guess? 
+
+            // psr values N,V,C,Z, J is set in BRANCHDEF it it triggers
+            State.ResN();
+            State.ResV();
+            State.ResC();
+            State.ResZ();
+
+        }
+        void BE(string line) 
+        {
+            str.Append("000"); // 00 + unused 0
+
+            str.Append("0001"); // ba cond
+
+            str.Append("010"); // branch op2
+
+            State.ResJ(); // cannot carry J if condition doesns't trigger
+
+            if (State.Z())
+            {
+                BRANCHDEF(line);
+            }
+            else str.Append("0000000000000000000000"); // displacement will be 0 coz condition is not met i guess?
+
+            // psr values N,V,C,Z, J is set in BRANCHDEF it it triggers
+            State.ResN();
+            State.ResV();
+            State.ResC();
+            State.ResZ();
+
+        }
+        void BCS(string line)
+        {
+            str.Append("000"); // 00 + unused 0
+
+            str.Append("0101"); // bcs cond
+
+            str.Append("010"); // branch op2
+
+            State.ResJ(); // cannot carry J if condition doesns't trigger
+
+            if (State.C()) // I HAVE NO IDEA WHEN C IS TRUE????
+            {
+                BRANCHDEF(line);
+            }
+            else str.Append("0000000000000000000000"); // displacement will be 0 coz condition is not met i guess?
+            
+            // psr values N,V,C,Z, J is set in BRANCHDEF it it triggers
+            State.ResN();
+            State.ResV();
+            State.ResC();
+            State.ResZ();
+
+        }
+        void BA(string line)
+        {
+            str.Append("000"); // 00 + unused 0
+
+            str.Append("1000"); // ba cond
+
+            str.Append("010"); // branch op2
+
+            State.ResJ();
+
+            BRANCHDEF(line);
+
+            // psr values N,V,C,Z, J is set in BRANCHDEF it it triggers
+            State.ResN();
+            State.ResV();
+            State.ResC();
+            State.ResZ();
+            
+
+        }
+        void BRANCHDEF(string line)
+        {
+            string FuncToFind = line.Split(' ')[1];
+            int f = 0;
+            foreach (Memory m in Func)
+            {
+                if (m.Identifier == FuncToFind)
+                {
+                    string stradd = Convert.ToString(m.Value, 2);
+                    if (stradd.Length > 22)
+                    {
+                        throw new Exception("Memory overflow exception for branching routine");
+                    }
+                    DispNumber(stradd, str, 22);
+                    str.Append(stradd);
+                    Link.SetValue(m.Value);
+                    Exe.CurrentLine = m.Value;
+                    PC.SetValue(f);
+                    Exe.CurrentFunc = f;
+                    break;
+                }
+                f++;
+            }
             State.SetJ();
         }
         void CALL(string line)
@@ -752,16 +841,18 @@ namespace ARC
                 if(m.Identifier == FuncToFind)
                 {
                     string stradd = Convert.ToString(m.Value, 2);
-                    for(int i = 0; i < 30 - stradd.Length; i++)
+                    if(stradd.Length > 30)
                     {
-                        str.Append('0');
+                        throw new Exception("Memory overflow exception for calling subroutine");
                     }
+                    DispNumber(stradd,str, 30);
                     str.Append(stradd);
-                    Link.SetValue(f);
+                    Link.SetValue(Exe.CurrentLine);
+                    PC.SetValue(f);
                 }
                 f++;
             }
-            PC.SetValue(Func[Link.Value()].Value);
+            State.SetJ();
         }
         int FindReg(string line, int which)
         {
@@ -869,6 +960,13 @@ namespace ARC
 
             return toAdd;
         }
+        void DispNumber(string stradd, StringBuilder str, int j)
+        {
+            for (int i = 0; i < j - stradd.Length; i++)
+            {
+                str.Append('0');
+            }
+        }
         string GetLine(string fileName, int line)
         {
             using (var sr = new StreamReader(fileName))
@@ -890,7 +988,29 @@ namespace ARC
         }
         public override string ToString()
         {
-            return $"[{Identifier}] stores {Value}, value is stored function location: {isFunc}";
+            StringBuilder stt = new StringBuilder();
+            if (isFunc)
+            {
+                stt.Append($"[{Identifier}] is found at line {Value}");
+            }
+            else stt.Append($"[{Identifier}] stores the integer: {Value}");
+            return stt.ToString();
+        }
+    }
+    class Driver
+    {
+        ARC myArc { get; set; }
+        public int IsInCall { get; set; }
+        public int CurrentLine { get; set; }
+        public int CurrentFunc { get; set; }
+
+        public Driver(ARC myArc)
+        {
+
+            IsInCall = 0;
+            CurrentFunc = 0;
+            CurrentLine = 0;
+            this.myArc = myArc;
         }
     }
     class PSR
@@ -978,6 +1098,10 @@ namespace ARC
         {
             j = false;
         }
+        public override string ToString()
+        {
+            return $"%PSR: J{j}, N{n}, V{v}, C{c}, Z{z}.";
+        }
     }
     class Registry
     {
@@ -986,6 +1110,7 @@ namespace ARC
         bool isNull = false;
         bool isSp = false;
         bool isLink = false;
+        int id { get; set; }
         public Registry(int i)
         {
             switch (i)
@@ -995,6 +1120,7 @@ namespace ARC
                 case 15: isLink= true; break;
                 default: break;
             }
+            id = i;
             value = 0;
             for (int j = 0; j < bits.Length; j++)
             {
@@ -1032,6 +1158,19 @@ namespace ARC
             {
                 bits[j] = b[i];
             }
+        }
+        public override string ToString()
+        {
+            StringBuilder stt = new StringBuilder();
+            if(id == 32)
+            {
+                stt.Append($"%PC = {value}, it contains the last executed label memory position");
+            }
+            else stt.Append($"%r{id} = {value}");
+            if (isNull) stt.Append(", it will always contain 0.");
+            if (isSp) stt.Append(", is the stack pointer");
+            if (isLink) stt.Append(", stores the call / ba position indexes");
+            return stt.ToString();
         }
     }    
 }
