@@ -6,16 +6,20 @@ I don't know how to write a readme, it just does random indentaiton and stuff.
 
 - Important parsing notes:
 
-1.Whenever using "ld" or "st" the memory label has to be in square brackets like: "[memID]", otherwise it won't work. (more on this at commands)
+1. Whenever using "ld" or "st" including the first syntax in [] brackets means you want to load the integer found at the label between the brackets, if you want to load an int from memory adress you need to have the adress inside a registry and use that as a first syntax.
 
-1.1 Using parsing it like [MEMID] in any other command will result in a compilation error, because only the commands LD and ST can access memory.
+2. Only load and store commands can access memory, every other command has to be done with registers.
 
-2. Use blank spaces after each word, an example would be: "function1: ld 25, %r5 ! loads 25 into registry 5", comments are optional.
+3. Use blank spaces after each word, an example would be: "function1: ld 25, %r5 ! loads 25 into registry 5", comments are optional.
 
-3. Memory labels that store integers need to be either jumped over or jumped to a different label to avoid errors. The machine cannot compile a line that doesn't have a command in it.
+4. Memory labels that store integers need to be either jumped over or jumped to a different label to avoid errors. The machine cannot compile a line that doesn't have a command in it.
+
+5. The LINK register gains a new value every time a label is entered, or when call is used (careful because link will update itself if you called a label and didn't jump back before going into a new label')
+
 
 # How the machine actually works: ( i tried my best )
 
+- Sethi command is automatically compiled if needed at arithmetic command.
 - This machine is a basic load / store / add machine, i think.
 - This machine was not tested properly for complicated bits of code, it is meant for a simple visualization of simple assembly commands ( almost ).
 - This machine stores Labels and Memory values inside a special file it creates, then it reads from it.
@@ -83,6 +87,29 @@ bneg // branch only if the last operation resulted in a negative number.
 # A quick code snippet visualization:
 
 ![image](https://user-images.githubusercontent.com/115028239/212106861-32d48c6c-a103-46e8-a1e2-64321ba45f61.png)
+
+And this is how the sum of an array of numbers would look like: 
+
+		ld [length], %r1
+		ld [address], %r2
+		andcc %r3, %r0, %r3
+loop: 	andcc %r1, %r1, %r0
+		be done
+		addcc %r1, -1, %r1           ! decrease count by 1
+		addcc %r2, %r1, %r4          ! store address of next element in %r4
+		ld %r4, %r5                  ! %r5 gets the value of next element from %r4 address
+		addcc %r3, %r5, %r3          ! %r3 will contain the overall sum
+		ba loop
+done: 	jumpl + 8                    ! has to jump 8 lines
+length: 	5                        ! 5 elements
+address: 	13                       ! address of array
+a: 		25                           ! array starts from here
+		-10
+		33
+		-5
+		7
+.end
+
 
 # Other commands ( these don't get compiled ):
 
