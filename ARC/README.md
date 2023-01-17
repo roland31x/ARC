@@ -88,27 +88,13 @@ bneg // branch only if the last operation resulted in a negative number.
 
 ![image](https://user-images.githubusercontent.com/115028239/212106861-32d48c6c-a103-46e8-a1e2-64321ba45f61.png)
 
-And this is how the sum of an array of numbers would look like: 
+And this is how the sum of an array of numbers would look like with this machine: 
 
-		ld [length], %r1
-		ld [address], %r2
-		andcc %r3, %r0, %r3
-loop: 	andcc %r1, %r1, %r0
-		be done
-		addcc %r1, -1, %r1           ! decrease count by 1
-		addcc %r2, %r1, %r4          ! store address of next element in %r4
-		ld %r4, %r5                  ! %r5 gets the value of next element from %r4 address
-		addcc %r3, %r5, %r3          ! %r3 will contain the overall sum
-		ba loop
-done: 	jumpl + 8                    ! has to jump 8 lines
-length: 	5                        ! 5 elements
-address: 	13                       ! address of array
-a: 		25                           ! array starts from here
-		-10
-		33
-		-5
-		7
-.end
+![image](https://user-images.githubusercontent.com/115028239/212952781-5662e224-e157-42d5-913b-8c67053523b9.png)
+
+which is based on an actual working assembly code snippet:
+
+![image](https://user-images.githubusercontent.com/115028239/212952985-5da2380a-7ebf-4534-9e1e-61b402824c2e.png)
 
 
 # Other commands ( these don't get compiled ):
