@@ -91,8 +91,9 @@ namespace ARC
         Driver Exe { get; set; }
         Registry PC;
 
-        List<Memory> Mem = new List<Memory>();
+        //List<Memory> Mem = new List<Memory>();
         List<Memory> Func = new List<Memory>();
+        List<Fragment> MemF = new List<Fragment>();
 
         StringBuilder str { get; set; }
         public ARC()
@@ -109,7 +110,7 @@ namespace ARC
             Link = rgs[15];
             PC = new Registry(32);
             rgs.Add(PC);
-            Func.Add(new Memory(0, "BaseFunc", true));
+            Func.Add(new Memory(0, "$START$", true));
         }
         void LoadMem(string line,int lineval)
         {
@@ -117,7 +118,8 @@ namespace ARC
             {
                 if (int.TryParse(line.Split(':')[1], out int value))
                 {
-                    Mem.Add(new Memory(value, line.Split(':')[0], false));
+                    //Mem.Add(new Memory(value, line.Split(':')[0], false));
+                    MemF.Add(new Fragment(value, lineval));
                     Func.Add(new Memory(lineval, line.Split(':')[0], false));
                 }
                 else
@@ -125,6 +127,10 @@ namespace ARC
                     
                     Func.Add(new Memory(lineval, line.Split(':')[0], true));
                 }
+            }
+            else if(int.TryParse(line.Trim(),out int value))
+            {
+                MemF.Add(new Fragment(value, lineval));
             }
             else return;
         }
@@ -193,8 +199,11 @@ namespace ARC
             }
             State.Reset();
             str.Clear();
-            Mem = new List<Memory>();
+            Exe = new Driver(this);
+            // Mem = new List<Memory>();
+            MemF = new List<Fragment>();
             Func = new List<Memory>();
+            Func.Add(new Memory(0, "$START$", true));
             Console.WriteLine("~machine was reset to a stable state~");
         }
         public void Work(string text)
@@ -226,7 +235,7 @@ namespace ARC
             {
                 Console.WriteLine(m.ToString());
             }
-            foreach (Memory m in Mem)
+            foreach (Fragment m in MemF)
             {
                 Console.WriteLine(m.ToString());
             }
@@ -297,7 +306,7 @@ namespace ARC
             str.Append("11");
             int toLoad = 0;
 
-            int firstreg = FindReg(line, 0);
+            int firstreg = FindReg(line, 3);
 
             str.Append("000000"); // op
 
@@ -309,19 +318,26 @@ namespace ARC
                 string memID = line.Split(']')[0].Split('[')[1];
                 int i = 0;
                 int memlocation = -1;
-                foreach (Memory m in Mem)
+                foreach (Memory m in Func)
                 {
                     if (m.Identifier == memID)
                     {
-                        memlocation = i;
-                        toLoad = m.Value;
+                        memlocation = m.Value;
+                        foreach(Fragment f in MemF)
+                        {
+                            if(f.Position == memlocation)
+                            {
+                                toLoad = f.Value;
+                                break;
+                            }
+                        }
                         break;
                     }
                     i++;
                 }
                 if(memlocation == -1)
                 {
-                    throw new Exception("this part of the memory is not initialized!!!");
+                    throw new ArgumentException("Memory cannot be directly accessed, you need to access it either through register or register arithmetic");
                 }
                 sp.SetValue(memlocation);
                 str.Append("00000000");
@@ -332,8 +348,40 @@ namespace ARC
             }
             else
             {
-                str.Append('1');
-                toLoad = FindNumber(line);
+                str.Append('0');
+                try
+                {
+                    toLoad = FindNumber(line);
+                }
+                catch (Exception)
+                {
+                    try
+                    {
+                        str.Append("00000000");
+                        int adressreg = FindReg(line, 0);
+                        if(adressreg == firstreg)
+                        {
+                            throw new FormatException("bad ld syntax");
+                        }
+                        else
+                        {
+                            int toFind = rgs[adressreg].Value();
+                            foreach(Fragment f in MemF)
+                            {
+                                if (f.Position == toFind)
+                                {
+                                    toLoad = f.Value;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e.Message);
+
+                    }
+                }
             }
             rgs[firstreg].SetValue(toLoad);
 
@@ -357,25 +405,29 @@ namespace ARC
             str.Append("11");
 
             string toSt = line.Split('[')[1].Split(']')[0];
-            Memory Store = new Memory(0, "null", false);
-            int Location = Mem.Count;
+            Fragment Store = new Fragment(0, 0);
+            int Location = Func[Func.Count - 2].Value + 1;
             bool found = false;
             int i = 0;
-            foreach (Memory m in Mem)
+            foreach (Memory m in Func)
             {
                 if (m.Identifier == toSt)
                 {
-                    Location = i;
-                    Store = m;
+                    Location = m.Value;
+                    foreach(Fragment f in MemF)
+                    {
+                        if(f.Position == Location)
+                        {
+                            Store = f;
+                            break;
+                        }
+                    }
                     found = true;
                     break;
                 }
                 i++;
             }
-            if (!found)
-            {
-                Store = new Memory(0, toSt, false);
-            }
+            
 
             sp.SetValue(Location);
 
@@ -391,9 +443,18 @@ namespace ARC
 
             int firstreg = FindReg(line, 0);
 
-            Store.Value = rgs[firstreg].Value();
+            if (!found)
+            {
+                Store = new Fragment(rgs[firstreg].Value(), Location);
+                MemF.Add(Store);
+                Func.Add(new Memory(Location, toSt, false));
+            }
+            else
+            {
+                Store.Value = rgs[firstreg].Value();
+            }
 
-            Mem.Add(Store);
+            //Mem.Add(Store);
 
             // PSR 
             State.ResJ();
@@ -997,6 +1058,19 @@ namespace ARC
             return stt.ToString();
         }
     }
+    class Fragment
+    {
+        public int Value { get; set; }
+        public int Position { get; set; }
+        public Fragment(int val, int pos)
+        {
+            Value = val; Position = pos;
+        }
+        public override string ToString()
+        {
+            return $"Integer {Value} is at line {Position}";
+        }
+    }
     class Driver
     {
         ARC myArc { get; set; }
@@ -1100,7 +1174,7 @@ namespace ARC
         }
         public override string ToString()
         {
-            return $"%PSR: J{j}, N{n}, V{v}, C{c}, Z{z}.";
+            return $"%PSR: J:{j}, N:{n}, V:{v}, C:{c}, Z:{z}.";
         }
     }
     class Registry
